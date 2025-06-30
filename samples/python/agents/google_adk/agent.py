@@ -1,6 +1,7 @@
 import json
 import random
-from typing import Any, AsyncIterable, Dict, Optional
+import pandas as pd
+from typing import Any, AsyncIterable, Dict, List, Optional
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.tools.tool_context import ToolContext
 from google.adk.artifacts import InMemoryArtifactService
@@ -12,92 +13,55 @@ from google.genai import types
 # Local cache of created request_ids for demo purposes.
 request_ids = set()
 
+activities = []
 
-def create_request_form(date: Optional[str] = None, amount: Optional[str] = None, purpose: Optional[str] = None) -> dict[str, Any]:
+
+def add_activity(
+    work_item: str, details: str, due_date: str, progress: str
+) -> dict[str, Any]:
   """
-   Create a request form for the employee to fill out.
-   
-   Args:
-       date (str): The date of the request. Can be an empty string.
-       amount (str): The requested amount. Can be an empty string.
-       purpose (str): The purpose of the request. Can be an empty string.
-       
-   Returns:
-       dict[str, Any]: A dictionary containing the request form data.
-   """
-  request_id = "request_id_" + str(random.randint(1000000, 9999999))
-  request_ids.add(request_id)
-  return {
-      "request_id": request_id,
-      "date": "<transaction date>" if not date else date,
-      "amount": "<transaction dollar amount>" if not amount else amount,
-      "purpose": "<business justification/purpose of the transaction>" if not purpose else purpose,
-  }
+    Adds a new activity to the tracker.
 
-def return_form(
-    form_request: dict[str, Any],    
-    tool_context: ToolContext,
-    instructions: Optional[str] = None) -> dict[str, Any]:
+    Args:
+        work_item (str): What you are working on.
+        details (str): Additional details about the work item.
+        due_date (str): When the work item is expected to be completed.
+        progress (str): The current progress of the work item.
+
+    Returns:
+        dict[str, Any]: A dictionary containing the status of the operation.
+    """
+  activities.append(
+      {
+          "Work Item": work_item,
+          "Details": details,
+          "Due Date": due_date,
+          "Progress": progress,
+      }
+  )
+  return {"status": "Activity added successfully."}
+
+
+def save_activities_to_excel(file_path: str) -> dict[str, Any]:
   """
-   Returns a structured json object indicating a form to complete.
-   
-   Args:
-       form_request (dict[str, Any]): The request form data.
-       tool_context (ToolContext): The context in which the tool operates.
-       instructions (str): Instructions for processing the form. Can be an empty string.       
-       
-   Returns:
-       dict[str, Any]: A JSON dictionary for the form response.
-   """  
-  if isinstance(form_request, str):
-    form_request = json.loads(form_request)
+    Saves all tracked activities to an Excel file.
 
-  tool_context.actions.skip_summarization = True
-  tool_context.actions.escalate = True
-  form_dict = {
-      'type': 'form',
-      'form': {
-        'type': 'object',
-        'properties': {
-            'date': {
-                'type': 'string',
-                'format': 'date',
-                'description': 'Date of expense',
-                'title': 'Date',
-            },
-            'amount': {
-                'type': 'string',
-                'format': 'number',
-                'description': 'Amount of expense',
-                'title': 'Amount',
-            },
-            'purpose': {
-                'type': 'string',
-                'description': 'Purpose of expense',
-                'title': 'Purpose',
-            },
-            'request_id': {
-                'type': 'string',
-                'description': 'Request id',
-                'title': 'Request ID',
-            },
-        },
-        'required': list(form_request.keys()),
-      },
-      'form_data': form_request,
-      'instructions': instructions,
-  }
-  return json.dumps(form_dict)
+    Args:
+        file_path (str): The path to save the Excel file to.
 
-def reimburse(request_id: str) -> dict[str, Any]:
-  """Reimburse the amount of money to the employee for a given request_id."""
-  if request_id not in request_ids:
-    return {"request_id": request_id, "status": "Error: Invalid request_id."}
-  return {"request_id": request_id, "status": "approved"}
+    Returns:
+        dict[str, Any]: A dictionary containing the status of the operation.
+    """
+  if not activities:
+    return {"status": "No activities to save."}
+
+  df = pd.DataFrame(activities)
+  df.to_excel(file_path, index=False)
+  return {"status": f"Activities saved to {file_path}"}
 
 
-class ReimbursementAgent:
-  """An agent that handles reimbursement requests."""
+class ActivityTrackerAgent:
+  """An agent that handles tracking activities."""
 
   SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]
 
@@ -126,9 +90,11 @@ class ReimbursementAgent:
           state={},
           session_id=session_id,
       )
-    events = list(self._runner.run(
-        user_id=self._user_id, session_id=session.id, new_message=content
-    ))
+    events = list(
+        self._runner.run(
+            user_id=self._user_id, session_id=session.id, new_message=content
+        )
+    )
     if not events or not events[-1].content or not events[-1].content.parts:
       return ""
     return "\n".join([p.text for p in events[-1].content.parts if p.text])
@@ -152,17 +118,16 @@ class ReimbursementAgent:
     ):
       if event.is_final_response():
         response = ""
-        if (
-            event.content
-            and event.content.parts
-            and event.content.parts[0].text
-        ):
+        if event.content and event.content.parts and event.content.parts[0].text:
           response = "\n".join([p.text for p in event.content.parts if p.text])
         elif (
             event.content
             and event.content.parts
-            and any([True for p in event.content.parts if p.function_response])):
-          response = next((p.function_response.model_dump() for p in event.content.parts))
+            and any(True for p in event.content.parts if p.function_response)
+        ):
+          response = next(
+              (p.function_response.model_dump() for p in event.content.parts)
+          )
         yield {
             "is_task_complete": True,
             "content": response,
@@ -170,44 +135,34 @@ class ReimbursementAgent:
       else:
         yield {
             "is_task_complete": False,
-            "updates": "Processing the reimbursement request...",
+            "updates": "Processing the activity tracking request...",
         }
 
   def _build_agent(self) -> LlmAgent:
-    """Builds the LLM agent for the reimbursement agent."""
+    """Builds the LLM agent for the activity tracker agent."""
     return LlmAgent(
-        model="gemini-2.0-flash-001",
-        name="reimbursement_agent",
+        model="gemini-1.5-flash",
+        name="activity_tracker_agent",
         description=(
-            "This agent handles the reimbursement process for the employees"
-            " given the amount and purpose of the reimbursement."
+            "This agent helps track your activities and save them to an Excel"
+            " file."
         ),
         instruction="""
-    You are an agent who handle the reimbursement process for employees.
+    You are an agent that helps me track my activities.
 
-    When you receive an reimbursement request, you should first create a new request form using create_request_form(). Only provide default values if they are provided by the user, otherwise use an empty string as the default value.
-      1. 'Date': the date of the transaction.
-      2. 'Amount': the dollar amount of the transaction.
-      3. 'Business Justification/Purpose': the reason for the reimbursement.
+    When I tell you about an activity, you should use the `add_activity` tool to record it. You'll need to ask me for the following information if I don't provide it:
+      1. 'Work Item': What I am working on.
+      2. 'Details': Any additional details.
+      3. 'Due Date': When I expect to complete it.
+      4. 'Progress': The current progress.
 
-    Once you created the form, you should return the result of calling return_form with the form data from the create_request_form call.
+    When I want to save my activities, you should use the `save_activities_to_excel` tool. You will need to ask me for the file path to save the Excel file.
 
-    Once you received the filled-out form back from the user, you should then check the form contains all required information:
-      1. 'Date': the date of the transaction.
-      2. 'Amount': the value of the amount of the reimbursement being requested.
-      3. 'Business Justification/Purpose': the item/object/artifact of the reimbursement.
-
-    If you don't have all of the information, you should reject the request directly by calling the request_form method, providing the missing fields.
-
-
-    For valid reimbursement requests, you can then use reimburse() to reimburse the employee.
-      * In your response, you should include the request_id and the status of the reimbursement request.
-
+    Always be helpful and ask clarifying questions if you need more information.
     """,
         tools=[
-            create_request_form,
-            reimburse,
-            return_form,
+            add_activity,
+            save_activities_to_excel,
         ],
     )
 

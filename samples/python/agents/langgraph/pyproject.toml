@@ -1,17 +1,20 @@
 [project]
 name = "a2a-sample-agent-langgraph"
 version = "0.1.0"
-description = "Sample LangGraph currency ggent with A2A Protocol"
+description = "Sample LangGraph calendar agent with A2A Protocol"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "a2a-samples",
     "click>=8.1.8",
-    "httpx>=0.28.1",
-    "langchain-google-genai>=2.0.10",
     "langgraph>=0.3.18",
     "pydantic>=2.10.6",
     "python-dotenv>=1.1.0",
+    "google-auth>=2.29.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-api-python-client>=2.126.0",
+    "dateparser>=1.2.0",
+    "openpyxl>=3.1.2",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -1,3 +1,9 @@
 .DS_Store
 __pycache__
 .env
+# Credential and token files
+credentials.json
+token.json
+*.pem
+*.key
+*.crt

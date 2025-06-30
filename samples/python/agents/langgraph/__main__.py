@@ -2,7 +2,7 @@ from common.server import A2AServer
 from common.types import AgentCard, AgentCapabilities, AgentSkill, MissingAPIKeyError
 from common.utils.push_notification_auth import PushNotificationSenderAuth
 from agents.langgraph.task_manager import AgentTaskManager
-from agents.langgraph.agent import CurrencyAgent
+from agents.langgraph.agent import CalendarAgent
 import click
 import os
 import logging
@@ -17,26 +17,27 @@ logger = logging.getLogger(__name__)
 @click.option("--host", "host", default="localhost")
 @click.option("--port", "port", default=10000)
 def main(host, port):
-    """Starts the Currency Agent server."""
+    """Starts the Calendar Agent server."""
     try:
-        if not os.getenv("GOOGLE_API_KEY"):
-            raise MissingAPIKeyError("GOOGLE_API_KEY environment variable not set.")
+        # No API key check needed for Google Calendar local OAuth, but keep for future extensibility
+        # if not os.getenv("GOOGLE_API_KEY"):
+        #     raise MissingAPIKeyError("GOOGLE_API_KEY environment variable not set.")
 
         capabilities = AgentCapabilities(streaming=True, pushNotifications=True)
         skill = AgentSkill(
-            id="convert_currency",
-            name="Currency Exchange Rates Tool",
-            description="Helps with exchange values between various currencies",
-            tags=["currency conversion", "currency exchange"],
-            examples=["What is exchange rate between USD and GBP?"],
+            id="calendar_tracking",
+            name="Calendar & Day Planner",
+            description="Helps you track, view, and summarize your Google Calendar events and daily schedule.",
+            tags=["calendar", "day planner", "schedule", "events"],
+            examples=["What are my events today?", "Show my next 10 meetings.", "What's on my calendar tomorrow?"],
         )
         agent_card = AgentCard(
-            name="Currency Agent",
-            description="Helps with exchange rates for currencies",
+            name="Calendar Agent",
+            description="Helps you track and plan your day using your Google Calendar.",
             url=f"http://{host}:{port}/",
             version="1.0.0",
-            defaultInputModes=CurrencyAgent.SUPPORTED_CONTENT_TYPES,
-            defaultOutputModes=CurrencyAgent.SUPPORTED_CONTENT_TYPES,
+            defaultInputModes=CalendarAgent.SUPPORTED_CONTENT_TYPES,
+            defaultOutputModes=CalendarAgent.SUPPORTED_CONTENT_TYPES,
             capabilities=capabilities,
             skills=[skill],
         )
@@ -45,7 +46,7 @@ def main(host, port):
         notification_sender_auth.generate_jwk()
         server = A2AServer(
             agent_card=agent_card,
-            task_manager=AgentTaskManager(agent=CurrencyAgent(), notification_sender_auth=notification_sender_auth),
+            task_manager=AgentTaskManager(agent=CalendarAgent(), notification_sender_auth=notification_sender_auth),
             host=host,
             port=port,
         )
