@@ -1,41 +1,40 @@
-# LangGraph Currency Agent with A2A Protocol
+# LangGraph Calendar Agent with A2A Protocol
 
-This sample demonstrates a currency conversion agent built with [LangGraph](https://langchain-ai.github.io/langgraph/) and exposed through the A2A protocol. It showcases conversational interactions with support for multi-turn dialogue and streaming responses.
+This sample demonstrates a calendar tracking and day planner agent built with [LangGraph](https://langchain-ai.github.io/langgraph/) and exposed through the A2A protocol. It showcases conversational interactions with support for multi-turn dialogue and streaming responses, powered by the Google Calendar API.
 
 ## How It Works
 
-This agent uses LangGraph with Google Gemini to provide currency exchange information through a ReAct agent pattern. The A2A protocol enables standardized interaction with the agent, allowing clients to send requests and receive real-time updates.
+This agent uses LangGraph and the Google Calendar API to provide information about your upcoming events, daily schedule, and meetings. The A2A protocol enables standardized interaction with the agent, allowing clients to send requests and receive real-time updates.
 
 ```mermaid
 sequenceDiagram
     participant Client as A2A Client
     participant Server as A2A Server
-    participant Agent as LangGraph Agent
-    participant API as Frankfurter API
+    participant Agent as LangGraph Calendar Agent
+    participant API as Google Calendar API
 
-    Client->>Server: Send task with currency query
-    Server->>Agent: Forward query to currency agent
+    Client->>Server: Send task with calendar query
+    Server->>Agent: Forward query to calendar agent
 
     alt Complete Information
-        Agent->>API: Call get_exchange_rate tool
-        API->>Agent: Return exchange rate data
+        Agent->>API: Call Google Calendar API
+        API->>Agent: Return event data
         Agent->>Server: Process data & return result
-        Server->>Client: Respond with currency information
+        Server->>Client: Respond with calendar information
     else Incomplete Information
         Agent->>Server: Request additional input
         Server->>Client: Set state to "input-required"
         Client->>Server: Send additional information
         Server->>Agent: Forward additional info
-        Agent->>API: Call get_exchange_rate tool
-        API->>Agent: Return exchange rate data
+        Agent->>API: Call Google Calendar API
+        API->>Agent: Return event data
         Agent->>Server: Process data & return result
-        Server->>Client: Respond with currency information
+        Server->>Client: Respond with calendar information
     end
 
     alt With Streaming
         Note over Client,Server: Real-time status updates
-        Server->>Client: "Looking up exchange rates..."
-        Server->>Client: "Processing exchange rates..."
+        Server->>Client: "Looking up your calendar events..."
         Server->>Client: Final result
     end
 ```
@@ -46,13 +45,14 @@ sequenceDiagram
 - **Real-time Streaming**: Provides status updates during processing
 - **Push Notifications**: Support for webhook-based notifications
 - **Conversational Memory**: Maintains context across interactions
-- **Currency Exchange Tool**: Integrates with Frankfurter API for real-time rates
+- **Google Calendar Integration**: Reads your upcoming events and meetings
 
 ## Prerequisites
 
 - Python 3.13 or higher
 - [UV](https://docs.astral.sh/uv/)
-- Access to an LLM and API Key
+- Google Cloud project with Calendar API enabled
+- `credentials.json` for OAuth2 (download from Google Cloud Console)
 
 ## Setup & Running
 
@@ -62,11 +62,7 @@ sequenceDiagram
    cd samples/python/agents/langgraph
    ```
 
-2. Create an environment file with your API key:
-
-   ```bash
-   echo "GOOGLE_API_KEY=your_api_key_here" > .env
-   ```
+2. Place your `credentials.json` (Google OAuth2 client secrets) in this directory.
 
 3. Run the agent:
 
@@ -84,19 +80,21 @@ sequenceDiagram
    uv run hosts/cli
    ```
 
+5. On first run, a browser window will open for Google authentication. Approve access to your calendar.
+
 ## Technical Implementation
 
-- **LangGraph ReAct Agent**: Uses the ReAct pattern for reasoning and tool usage
-- **Streaming Support**: Provides incremental updates during processing
-- **Checkpoint Memory**: Maintains conversation state between turns
+- **LangGraph Agent**: Handles multi-turn, streaming, and memory
+- **Google Calendar API**: Fetches and summarizes your next 10 events
 - **Push Notification System**: Webhook-based updates with JWK authentication
 - **A2A Protocol Integration**: Full compliance with A2A specifications
 
 ## Limitations
 
 - Only supports text-based input/output (no multi-modal support)
-- Uses Frankfurter API which has limited currency options
+- Requires Google OAuth2 authentication on first run
 - Memory is session-based and not persisted between server restarts
+- Only reads events (no event creation or editing)
 
 ## Examples
 
@@ -123,7 +121,7 @@ Content-Type: application/json
       "parts": [
         {
           "type": "text",
-          "text": "How much is the exchange rate for 1 USD to INR?"
+          "text": "What are my events today?"
         }
       ]
     }
@@ -141,14 +139,14 @@ Response:
     "id": "129",
     "status": {
       "state": "completed",
-      "timestamp": "2025-04-02T16:53:29.301828"
+      "timestamp": "2025-06-16T09:00:00.000000"
     },
     "artifacts": [
       {
         "parts": [
           {
             "type": "text",
-            "text": "The exchange rate for 1 USD to INR is 85.49."
+            "text": "Here are your next events:\n2025-06-16T10:00:00Z: Team Standup\n2025-06-16T13:00:00Z: Project Review"
           }
         ],
         "index": 0
@@ -182,7 +180,7 @@ Content-Type: application/json
       "parts": [
         {
           "type": "text",
-          "text": "How much is the exchange rate for 1 USD?"
+          "text": "Show me my meetings tomorrow."
         }
       ]
     }
@@ -199,70 +197,15 @@ Response - Seq 2:
   "result": {
     "id": "130",
     "status": {
-      "state": "input-required",
-      "message": {
-        "role": "agent",
-        "parts": [
-          {
-            "type": "text",
-            "text": "Which currency do you want to convert to? Also, do you want the latest exchange rate or a specific date?"
-          }
-        ]
-      },
-      "timestamp": "2025-04-02T16:57:02.336787"
-    },
-    "history": []
-  }
-}
-```
-
-Request - Seq 3:
-
-```
-POST http://localhost:10000
-Content-Type: application/json
-
-{
-  "jsonrpc": "2.0",
-  "id": 10,
-  "method": "tasks/send",
-  "params": {
-    "id": "130",
-    "sessionId": "a9bb617f2cd94bd585da0f88ce2ddba2",
-    "acceptedOutputModes": [
-      "text"
-    ],
-    "message": {
-      "role": "user",
-      "parts": [
-        {
-          "type": "text",
-          "text": "CAD"
-        }
-      ]
-    }
-  }
-}
-```
-
-Response - Seq 4:
-
-```
-{
-  "jsonrpc": "2.0",
-  "id": 10,
-  "result": {
-    "id": "130",
-    "status": {
       "state": "completed",
-      "timestamp": "2025-04-02T16:57:40.033328"
+      "timestamp": "2025-06-16T09:00:00.000000"
     },
     "artifacts": [
       {
         "parts": [
           {
             "type": "text",
-            "text": "The current exchange rate is 1 USD = 1.4328 CAD."
+            "text": "Here are your next events:\n2025-06-17T09:00:00Z: 1:1 with Manager\n2025-06-17T15:00:00Z: Doctor Appointment"
           }
         ],
         "index": 0
@@ -293,7 +236,7 @@ Request:
       "parts": [
         {
           "type": "text",
-          "text": "How much is 100 USD in GBP?"
+          "text": "What's on my calendar next week?"
         }
       ]
     }
@@ -304,18 +247,15 @@ Request:
 Response:
 
 ```
-data: {"jsonrpc":"2.0","id":12,"result":{"id":"131","status":{"state":"working","message":{"role":"agent","parts":[{"type":"text","text":"Looking up the exchange rates..."}]},"timestamp":"2025-04-02T16:59:34.578939"},"final":false}}
+data: {"jsonrpc":"2.0","id":12,"result":{"id":"131","status":{"state":"working","message":{"role":"agent","parts":[{"type":"text","text":"Looking up your calendar events..."}]},"timestamp":"2025-06-16T09:00:00.000000"},"final":false}}
 
-data: {"jsonrpc":"2.0","id":12,"result":{"id":"131","status":{"state":"working","message":{"role":"agent","parts":[{"type":"text","text":"Processing the exchange rates.."}]},"timestamp":"2025-04-02T16:59:34.737052"},"final":false}}
+data: {"jsonrpc":"2.0","id":12,"result":{"id":"131","artifact":{"parts":[{"type":"text","text":"Here are your next events:\n2025-06-23T11:00:00Z: Sprint Planning\n2025-06-23T14:00:00Z: Dentist Appointment"}],"index":0,"append":false}}}
 
-data: {"jsonrpc":"2.0","id":12,"result":{"id":"131","artifact":{"parts":[{"type":"text","text":"Based on the current exchange rate, 1 USD is equivalent to 0.77252 GBP. Therefore, 100 USD would be approximately 77.252 GBP."}],"index":0,"append":false}}}
-
-data: {"jsonrpc":"2.0","id":12,"result":{"id":"131","status":{"state":"completed","timestamp":"2025-04-02T16:59:35.331844"},"final":true}}
+data: {"jsonrpc":"2.0","id":12,"result":{"id":"131","status":{"state":"completed","timestamp":"2025-06-16T09:00:01.000000"},"final":true}}
 ```
 
 ## Learn More
 
 - [A2A Protocol Documentation](https://google.github.io/A2A/#/documentation)
 - [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
-- [Frankfurter API](https://www.frankfurter.app/docs/)
-- [Google Gemini API](https://ai.google.dev/gemini-api)
+- [Google Calendar API](https://developers.google.com/calendar/api)

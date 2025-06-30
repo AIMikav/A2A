@@ -16,9 +16,12 @@ from common.types import (
     JSONRPCResponse,
     SendTaskStreamingRequest,
     SendTaskStreamingResponse,
+    PushNotificationConfig,
+    InvalidParamsError,
 )
 from common.server.task_manager import InMemoryTaskManager
-from agent import ReimbursementAgent
+from agent import ActivityTrackerAgent
+from common.utils.push_notification_auth import PushNotificationSenderAuth
 import common.server.utils as utils
 from typing import Union
 import logging
@@ -26,9 +29,10 @@ logger = logging.getLogger(__name__)
 
 class AgentTaskManager(InMemoryTaskManager):
 
-    def __init__(self, agent: ReimbursementAgent):
+    def __init__(self, agent: ActivityTrackerAgent, notification_sender_auth: PushNotificationSenderAuth):
         super().__init__()
         self.agent = agent
+        self.notification_sender_auth = notification_sender_auth
 
     async def _stream_generator(
         self, request: SendTaskStreamingRequest
@@ -58,7 +62,9 @@ class AgentTaskManager(InMemoryTaskManager):
               artifacts = [Artifact(parts=parts, index=0, append=False)]
           message = Message(role="agent", parts=parts)
           task_status = TaskStatus(state=task_state, message=message)
-          await self._update_store(task_send_params.id, task_status, artifacts)
+          latest_task = await self._update_store(task_send_params.id, task_status, artifacts)
+          await self.send_task_notification(latest_task)
+          
           task_update_event = TaskStatusUpdateEvent(
                 id=task_send_params.id,
                 status=task_status,
@@ -96,30 +102,51 @@ class AgentTaskManager(InMemoryTaskManager):
             )
     def _validate_request(
         self, request: Union[SendTaskRequest, SendTaskStreamingRequest]
-    ) -> None:
+    ) -> JSONRPCResponse | None:
         task_send_params: TaskSendParams = request.params
         if not utils.are_modalities_compatible(
-            task_send_params.acceptedOutputModes, ReimbursementAgent.SUPPORTED_CONTENT_TYPES
+            task_send_params.acceptedOutputModes, ActivityTrackerAgent.SUPPORTED_CONTENT_TYPES
         ):
             logger.warning(
                 "Unsupported output mode. Received %s, Support %s",
                 task_send_params.acceptedOutputModes,
-                ReimbursementAgent.SUPPORTED_CONTENT_TYPES,
+                ActivityTrackerAgent.SUPPORTED_CONTENT_TYPES,
             )
             return utils.new_incompatible_types_error(request.id)
+        
+        if task_send_params.pushNotification and not task_send_params.pushNotification.url:
+            logger.warning("Push notification URL is missing")
+            return JSONRPCResponse(id=request.id, error=InvalidParamsError(message="Push notification URL is missing"))
+        
+        return None
     async def on_send_task(self, request: SendTaskRequest) -> SendTaskResponse:
-        error = self._validate_request(request)
-        if error:
-            return error
+        validation_error = self._validate_request(request)
+        if validation_error:
+            return SendTaskResponse(id=request.id, error=validation_error.error)
+        
+        if request.params.pushNotification:
+            if not await self.set_push_notification_info(request.params.id, request.params.pushNotification):
+                return SendTaskResponse(id=request.id, error=InvalidParamsError(message="Push notification URL is invalid"))
+
         await self.upsert_task(request.params)
+        task = await self._update_store(
+            request.params.id, TaskStatus(state=TaskState.WORKING), []
+        )
+        await self.send_task_notification(task)
         return await self._invoke(request)
     async def on_send_task_subscribe(
         self, request: SendTaskStreamingRequest
     ) -> AsyncIterable[SendTaskStreamingResponse] | JSONRPCResponse:
-        error = self._validate_request(request)
-        if error:
-            return error
+        validation_error = self._validate_request(request)
+        if validation_error:
+            return validation_error
+
         await self.upsert_task(request.params)
+
+        if request.params.pushNotification:
+            if not await self.set_push_notification_info(request.params.id, request.params.pushNotification):
+                return JSONRPCResponse(id=request.id, error=InvalidParamsError(message="Push notification URL is invalid"))
+
         return self._stream_generator(request)
     async def _update_store(
         self, task_id: str, status: TaskStatus, artifacts: list[Artifact]
@@ -161,4 +188,25 @@ class AgentTaskManager(InMemoryTaskManager):
         if not isinstance(part, TextPart):
             raise ValueError("Only text parts are supported")
         return part.text
+
+    async def send_task_notification(self, task: Task):
+        if not await self.has_push_notification_info(task.id):
+            logger.info(f"No push notification info found for task {task.id}")
+            return
+        push_info = await self.get_push_notification_info(task.id)
+
+        logger.info(f"Notifying for task {task.id} => {task.status.state}")
+        await self.notification_sender_auth.send_push_notification(
+            push_info.url,
+            data=task.model_dump(exclude_none=True)
+        )
+
+    async def set_push_notification_info(self, task_id: str, push_notification_config: PushNotificationConfig):
+        # Verify the ownership of notification URL by issuing a challenge request.
+        is_verified = await self.notification_sender_auth.verify_push_notification_url(push_notification_config.url)
+        if not is_verified:
+            return False
+        
+        await super().set_push_notification_info(task_id, push_notification_config)
+        return True
 
